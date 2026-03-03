@@ -27,11 +27,45 @@ def clean_text(text):
 
     return text
 
+
+def is_telemetry_line(line):
+    # Remove lines with long numeric clusters
+    tokens = line.split()
+
+    long_numeric_tokens = 0
+    for t in tokens:
+        if sum(ch.isdigit() for ch in t) >= 4:
+            long_numeric_tokens += 1
+
+    # If many long numeric tokens → telemetry
+    if long_numeric_tokens >= 2:
+        return True
+
+    return False
+
+
+def keep_japanese_line(line):
+
+    # 1. Drop extremely short lines
+    if len(line) < 4:
+        return False
+
+    # 2. Drop obvious formatting markers
+    if line.startswith(":") or "テープ" in line and ":" in line:
+        return False
+
+    # 3. Drop telemetry-like numeric dumps
+    if is_telemetry_line(line):
+        return False
+
+    return True
+
 class CharNGramModel:
     def __init__(self, n=N):
         self.n = n
         self.ngram_counts = defaultdict(Counter)
         # self.context_totals = Counter()
+
         self.global_counts = Counter()
         self.global_top = []
         self.vocab = set()
@@ -212,17 +246,29 @@ def train_model(work_dir):
         print(f"Training {lang}...")
 
         model = CharNGramModel()
-        # if lang == "zh":
-        #     model = CharNGramModel(n=4)
-        # elif lang == "ja":
-        #     model = CharNGramModel(n=5)
-        # elif lang == "ko":
-        #     model = CharNGramModel(n=5)
-        # else:
-        #     model = CharNGramModel(n=7)
+        if lang == "ja":
+            model = CharNGramModel(n=7)
+        elif lang == "zh":
+            model = CharNGramModel(n=8)
+        else:
+            model = CharNGramModel(n=10)
 
-        with open(os.path.join("data", fname), "r", encoding="utf8") as f:
-            model.train_stream(f.read())
+        file_path = os.path.join("data", fname)
+
+        with open(file_path, "r", encoding="utf8", errors="ignore") as f:
+
+            if lang == "ja":
+                lines = []
+                for raw_line in f:
+                    cleaned = clean_text(raw_line).strip()
+                    if cleaned and keep_japanese_line(cleaned):
+                        lines.append(cleaned)
+
+                print(f"Japanese lines kept: {len(lines)}")
+                model.train_stream("\n".join(lines))
+
+            else:
+                model.train_stream(f.read())
 
         model.prune()
         model.save(os.path.join(work_dir, f"{lang}.checkpoint"))

@@ -14,7 +14,7 @@ MIN_COUNT = 2
 LANG_N = {
     "ja": 7,
     "ko": 8,
-    "zh": 6,
+    "zh": 8, #before was 6
     "ar": 10,
     "hi": 10,
     "ru": 10,
@@ -27,7 +27,7 @@ LANG_N = {
 
 def clean_text(text):
     text = unicodedata.normalize("NFKC", text)
-    text = text.lower()
+    # text = text.lower()
 
     text = re.sub(r"_\w+", "", text)
     text = re.sub(r"<.*?>", "", text)
@@ -239,8 +239,10 @@ def detect_language(text):
         return "ja"
 
     # If only kanji → ambiguous between zh and ja
-    if has_cjk:
-        return None
+    # if has_cjk:
+    #     return None
+    if has_cjk and not (has_hiragana or has_katakana):
+      return "zh"
 
     return "en"
 
@@ -384,14 +386,14 @@ def test_without_langfile(work_dir, test_data, true_lang_file, answer_file, outp
         script_lang = detect_language(context)
 
         if script_lang and script_lang != "en":
-            lang = script_lang
+            predicted_lang = script_lang
         else:
             # Let model decide for ambiguous cases (including CJK-only)
             latin_guess = detect_latin_variant(context)
             if latin_guess:
-                lang = latin_guess
+                predicted_lang = latin_guess
             else:
-                lang = detect_language_by_model(context, models)
+                predicted_lang = detect_language_by_model(context, models)
 
 
         if predicted_lang == true_lang:
