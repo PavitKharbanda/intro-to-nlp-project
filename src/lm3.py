@@ -383,7 +383,6 @@ def test_without_langfile(work_dir, test_data, true_lang_file, answer_file, outp
 
         script_lang = detect_language(context)
 
-        script_lang = detect_language(context)
 
         if script_lang and script_lang != "en":
             predicted_lang = script_lang

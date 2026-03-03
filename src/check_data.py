@@ -20,7 +20,7 @@ def clean_text(text):
     return text
 
 
-file_path = "intro-to-nlp-project/data/ja.txt"
+file_path = "intro-to-nlp-project/data/zh.txt"
 
 with open(file_path, "r", encoding="utf8", errors="ignore") as f:
     raw_lines = [line.rstrip("\n") for line in f]
