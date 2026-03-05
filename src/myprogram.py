@@ -1,331 +1,55 @@
-# #!/usr/bin/env python
-# import os
-# import string
-# import random
-# from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
-
-
-# class MyModel:
-#     """
-#     This is a starter model to get you started. Feel free to modify this file.
-#     """
-
-#     @classmethod
-#     def load_training_data(cls):
-#         # your code here
-#         # this particular model doesn't train
-#         return []
-
-#     @classmethod
-#     def load_test_data(cls, fname):
-#         # your code here
-#         data = []
-#         with open(fname) as f:
-#             for line in f:
-#                 inp = line[:-1]  # the last character is a newline
-#                 data.append(inp)
-#         return data
-
-#     @classmethod
-#     def write_pred(cls, preds, fname):
-#         with open(fname, 'wt') as f:
-#             for p in preds:
-#                 f.write('{}\n'.format(p))
-
-#     def run_train(self, data, work_dir):
-#         # your code here
-#         pass
-
-#     def run_pred(self, data):
-#         # your code here
-#         preds = []
-#         all_chars = string.ascii_letters
-#         for inp in data:
-#             # this model just predicts a random character each time
-#             top_guesses = [random.choice(all_chars) for _ in range(3)]
-#             preds.append(''.join(top_guesses))
-#         return preds
-
-#     def save(self, work_dir):
-#         # your code here
-#         # this particular model has nothing to save, but for demonstration purposes we will save a blank file
-#         with open(os.path.join(work_dir, 'model.checkpoint'), 'wt') as f:
-#             f.write('dummy save')
-
-#     @classmethod
-#     def load(cls, work_dir):
-#         # your code here
-#         # this particular model has nothing to load, but for demonstration purposes we will load a blank file
-#         with open(os.path.join(work_dir, 'model.checkpoint')) as f:
-#             dummy_save = f.read()
-#         return MyModel()
-
-
-# if __name__ == '__main__':
-#     parser = ArgumentParser(formatter_class=ArgumentDefaultsHelpFormatter)
-#     parser.add_argument('mode', choices=('train', 'test'), help='what to run')
-#     parser.add_argument('--work_dir', help='where to save', default='work')
-#     parser.add_argument('--test_data', help='path to test data', default='example/input.txt')
-#     parser.add_argument('--test_output', help='path to write test predictions', default='pred.txt')
-#     args = parser.parse_args()
-
-#     random.seed(0)
-
-#     if args.mode == 'train':
-#         if not os.path.isdir(args.work_dir):
-#             print('Making working directory {}'.format(args.work_dir))
-#             os.makedirs(args.work_dir)
-#         print('Instatiating model')
-#         model = MyModel()
-#         print('Loading training data')
-#         train_data = MyModel.load_training_data()
-#         print('Training')
-#         model.run_train(train_data, args.work_dir)
-#         print('Saving model')
-#         model.save(args.work_dir)
-#     elif args.mode == 'test':
-#         print('Loading model')
-#         model = MyModel.load(args.work_dir)
-#         print('Loading test data from {}'.format(args.test_data))
-#         test_data = MyModel.load_test_data(args.test_data)
-#         print('Making predictions')
-#         pred = model.run_pred(test_data)
-#         print('Writing predictions to {}'.format(args.test_output))
-#         assert len(pred) == len(test_data), 'Expected {} predictions but got {}'.format(len(test_data), len(pred))
-#         model.write_pred(pred, args.test_output)
-#     else:
-#         raise NotImplementedError('Unknown mode {}'.format(args.mode))
-
-
-# import os, re, unicodedata
-# import math
-# import pickle
-# import argparse
-# from collections import defaultdict, Counter
-
-# # ================= CONFIG =================
-# N = 5
-# K = 0.5
-
-# # ================= CLEANING =================
-# def clean_text(text):
-#     text = text.lower()
-    
-#     # Normalize unicode (very important)
-#     text = unicodedata.normalize("NFKC", text)
-    
-#     # Remove control characters
-#     text = "".join(ch for ch in text if not unicodedata.category(ch).startswith("C"))
-    
-#     # Normalize whitespace
-#     text = re.sub(r"\s+", " ", text)
-    
-#     return text.strip()
-
-# # ================= MODEL =================
-# class CharNGramModel:
-#     def __init__(self, n=N):
-#         self.n = n
-#         self.counts = [defaultdict(Counter) for _ in range(n)]
-#         self.vocab = set()
-
-#     def train_line(self, line):
-#         line = clean_text(line.rstrip("\n"))
-#         padded = " " * (self.n - 1) + line
-
-#         for i in range(self.n - 1, len(padded)):
-#             for order in range(1, self.n + 1):
-#                 if i - order < 0:
-#                     continue
-#                 context = padded[i - order:i]
-#                 next_char = padded[i]
-#                 self.counts[order - 1][context][next_char] += 1
-#                 self.vocab.add(next_char)
-
-#     def train(self, lines):
-#         for line in lines:
-#             self.train_line(line)
-
-#     # ================= LANGUAGE SCORING =================
-#     def score(self, context):
-#         context = clean_text(context)
-#         padded = " " * (self.n - 1) + context
-#         log_prob = 0.0
-
-#         for i in range(self.n - 1, len(padded)):
-#             found = False
-#             for order in range(self.n, 0, -1):
-#                 if i - order < 0:
-#                     continue
-#                 ctx = padded[i - order:i]
-#                 if ctx in self.counts[order - 1]:
-#                     counter = self.counts[order - 1][ctx]
-#                     total = sum(counter.values())
-#                     vocab_size = len(self.vocab)
-#                     ch = padded[i]
-#                     prob = (counter[ch] + K) / (total + K * vocab_size)
-#                     log_prob += math.log(prob)
-#                     found = True
-#                     break
-#             if not found:
-#                 log_prob += math.log(1e-8)
-
-#         return log_prob
-
-#     # ================= NEXT CHAR PREDICTION =================
-#     def predict(self, context):
-#         context = clean_text(context)
-#         context = context[-(self.n - 1):]
-
-#         for order in range(self.n, 0, -1):
-#             if len(context) < order - 1:
-#                 continue
-
-#             ctx = context[-(order - 1):]
-#             if ctx in self.counts[order - 1]:
-#                 counter = self.counts[order - 1][ctx]
-#                 total = sum(counter.values())
-#                 vocab_size = len(self.vocab)
-
-#                 probs = []
-#                 for ch in self.vocab:
-#                     prob = (counter[ch] + K) / (total + K * vocab_size)
-#                     probs.append((prob, ch))
-
-#                 probs.sort(reverse=True)
-#                 return [ch for _, ch in probs[:3]]
-
-#         return [' ', 'e', 't']
-
-
-# # ================= TRAIN =================
-# def train_model(work_dir):
-#     models = {}
-
-#     data_path = os.path.join(os.getcwd(), "data")
-
-#     for fname in os.listdir(data_path):
-#         if not fname.endswith(".txt"):
-#             continue
-
-#         lang = fname.replace(".txt", "")
-#         model = CharNGramModel()
-
-#         file_path = os.path.join(data_path, fname)
-#         with open(file_path, "r", encoding="utf8") as f:
-#             lines = f.readlines()
-#             model.train(lines)
-
-#         models[lang] = model
-#         print(f"Trained LM for {lang}")
-
-#     os.makedirs(work_dir, exist_ok=True)
-
-#     with open(os.path.join(work_dir, "all_models.pkl"), "wb") as f:
-#         pickle.dump(models, f)
-
-#     print("Training complete.")
-
-
-# # ================= TEST =================
-# def test_model(work_dir, test_data, test_output):
-#     with open(os.path.join(work_dir, "all_models.pkl"), "rb") as f:
-#         models = pickle.load(f)
-
-#     with open(test_data, "r", encoding="utf8") as f:
-#         lines = f.readlines()
-
-#     with open(test_output, "w", encoding="utf8") as out:
-#         for line in lines:
-#             line = line.rstrip("\n")
-
-#             best_lang = None
-#             best_score = -1e18
-
-#             for lang, model in models.items():
-#                 score = model.score(line)
-#                 if score > best_score:
-#                     best_score = score
-#                     best_lang = lang
-
-#             preds = models[best_lang].predict(line)
-#             out.write("".join(preds) + "\n")
-
-#     print("Prediction complete.")
-
-
-# # ================= MAIN =================
-# if __name__ == "__main__":
-#     parser = argparse.ArgumentParser()
-#     parser.add_argument("mode", choices=["train", "test"])
-#     parser.add_argument("--work_dir", required=True)
-#     parser.add_argument("--test_data")
-#     parser.add_argument("--test_output")
-
-#     args = parser.parse_args()
-
-#     if args.mode == "train":
-#         train_model(args.work_dir)
-
-#     elif args.mode == "test":
-#         test_model(args.work_dir, args.test_data, args.test_output)
-
-
-import os
-import re
+import os, re
 import pickle
 import argparse
 import unicodedata
 from collections import defaultdict, Counter
+import math
+import gzip
 
-# =========================
-# CONFIG
-# =========================
-N = 5
+N = 10
+MIN_COUNT = 2
 
-# Interpolation weights (tuned for leaderboard)
-LAMBDAS = [0.05, 0.1, 0.15, 0.25, 0.45]  
-# unigram → 5gram
+LANG_N = {
+    "ja": 9,
+    "ko": 9,
+    "zh": 9,
+    "ar": 10,
+    "hi": 10,
+    "ru": 10,
+    "en": 12,
+    "fr": 12,
+    "de": 12,
+    "it": 12,
+}
 
-# =========================
-# CLEANING
-# =========================
+
 def clean_text(text):
     text = unicodedata.normalize("NFKC", text)
-    text = text.lower()
-
-    # Remove HTML tags
-    text = re.sub(r"<.*?>", "", text)
-
-    # Remove metadata markers
     text = re.sub(r"_\w+", "", text)
-
-    # Remove control characters
-    text = "".join(ch for ch in text if not unicodedata.category(ch).startswith("C"))
-
-    # Normalize whitespace
+    text = re.sub(r"<.*?>", "", text)
+    text = "".join(
+        ch for ch in text
+        if not unicodedata.category(ch).startswith("C")
+    )
     text = re.sub(r"\s+", " ", text)
+    return text
 
-    return text.strip()
 
-
-# =========================
-# MODEL
-# =========================
 class CharNGramModel:
     def __init__(self, n=N):
         self.n = n
-        self.counts = [defaultdict(Counter) for _ in range(n)]
+        self.ngram_counts = defaultdict(Counter)
+        self.global_counts = Counter()
+        self.global_top = []
         self.vocab = set()
+        self.successor_counts = defaultdict(Counter)
 
-    def train_line(self, line):
-        line = clean_text(line)
-        if not line:
-            return
+    def train_stream(self, text):
+        text = clean_text(text)
+        padded = " " * (self.n - 1) + text
 
-        padded = " " * (self.n - 1) + line
-
-        for ch in line:
+        for ch in text:
+            self.global_counts[ch] += 1
             self.vocab.add(ch)
         self.vocab.add(" ")
 
@@ -335,130 +59,442 @@ class CharNGramModel:
                     continue
                 context = padded[i - order:i]
                 next_char = padded[i]
-                self.counts[order - 1][context][next_char] += 1
+                self.ngram_counts[context][next_char] += 1
+        for i in range(len(text) - 1):
+            self.successor_counts[text[i]][text[i+1]] += 1
 
-    def train(self, lines):
-        for line in lines:
-            self.train_line(line)
+    def prune(self):
+        to_delete = []
+        for ctx, counter in self.ngram_counts.items():
+            if sum(counter.values()) < MIN_COUNT:
+                to_delete.append(ctx)
+        for ctx in to_delete:
+            del self.ngram_counts[ctx]
+        self.global_top = [
+            ch for ch, _ in self.global_counts.most_common(10)
+        ]
 
-    # -------------------------
-    # Interpolated Prediction
-    # -------------------------
     def predict(self, context):
         context = clean_text(context)
-        context = context[-(self.n - 1):]
+        combined = Counter()
 
-        vocab = list(self.vocab)
-        V = len(vocab)
+        for order in range(1, self.n + 1):
+            if order == 1:
+                ctx = ""
+            else:
+                if len(context) < order - 1:
+                    continue
+                ctx = context[-(order - 1):]
 
-        # Backoff from highest order to lowest
-        for order in range(self.n, 0, -1):
-
-            if len(context) < order - 1:
-                continue
-
-            ctx = context[-(order - 1):]
-
-            if ctx in self.counts[order - 1]:
-                counter = self.counts[order - 1][ctx]
+            if ctx in self.ngram_counts:
+                counter = self.ngram_counts[ctx]
                 total = sum(counter.values())
+                if total < 2:
+                    continue
+                weight = 2.0 ** (order - 1)   # revert to exponential
+                for ch, cnt in counter.items():
+                    combined[ch] += weight * cnt / total
 
-                scores = []
-                for ch in vocab:
-                    # Add-K smoothing
-                    prob = (counter[ch] + 0.5) / (total + 0.5 * V)
-                    scores.append((prob, ch))
+        preds = [ch for ch, _ in combined.most_common(3)]
 
-                scores.sort(reverse=True)
-                return [ch for _, ch in scores[:3]]
+        # 🔥 successor fallback ONLY if weak or short context
+        if context and (len(preds) < 3 or len(context) <= 6):
+            last_char = context[-1]
+            if last_char in self.successor_counts:
+                for ch, _ in self.successor_counts[last_char].most_common(10):
+                    if ch not in preds:
+                        preds.append(ch)
+                    if len(preds) == 3:
+                        break
 
-        # Fallback
-        return [' ', 'e', 't']
+        # final fallback
+        for ch in self.global_top:
+            if len(preds) == 3:
+                break
+            if ch not in preds:
+                preds.append(ch)
+
+        return preds[:3]
+
+    def score(self, text):
+        text = clean_text(text)
+        padded = " " * (self.n - 1) + text
+
+        score = 0.0
+        vocab_size = len(self.vocab)
+
+        for i in range(self.n - 1, len(padded)):
+            total_prob = 0.0
+            orders_used = 0
+
+            for order in range(1, self.n + 1):
+                if order == 1:
+                    ctx = ""
+                else:
+                    if i - order < 0:
+                        continue
+                    ctx = padded[i - order:i]
+
+                if ctx in self.ngram_counts:
+                    counter = self.ngram_counts[ctx]
+                    total = sum(counter.values())
+                    count = counter.get(padded[i], 0)
+                    prob = (count + 0.5) / (total + 0.5 * vocab_size)
+                else:
+                    prob = 1 / vocab_size
+
+                total_prob += prob
+                orders_used += 1
+
+            avg_prob = total_prob / orders_used
+            score += math.log(avg_prob)
+
+        return score / max(len(text), 1)
 
     def save(self, path):
-        with open(path, "wb") as f:
-            pickle.dump((self.counts, self.vocab), f)
+        with gzip.open(path, "wb") as f:
+            pickle.dump(
+                (self.n,
+                self.ngram_counts,
+                self.global_counts,
+                self.global_top,
+                self.vocab,
+                self.successor_counts),
+                f,
+                protocol=pickle.HIGHEST_PROTOCOL
+            )
 
     def load(self, path):
-        with open(path, "rb") as f:
-            self.counts, self.vocab = pickle.load(f)
+        with gzip.open(path, "rb") as f:
+            loaded = pickle.load(f)
+
+            if len(loaded) == 6:
+                (self.n,
+                self.ngram_counts,
+                self.global_counts,
+                self.global_top,
+                self.vocab,
+                self.successor_counts) = loaded
+            else:
+                # old checkpoints (before successor stats)
+                (self.n,
+                self.ngram_counts,
+                self.global_counts,
+                self.global_top,
+                self.vocab) = loaded
+                self.successor_counts = defaultdict(Counter)
+
+def detect_latin_variant(text):
+    t = text.lower()
+    words = set(t.split())
+
+    if any(ch in t for ch in "äöüß"):
+        return "de"
+    if any(ch in t for ch in "œç"):
+        return "fr"
+
+    # Italian function words
+    italian_words = {"di", "che", "non", "una", "per", "con", "sono", "della", "questo", "nella"}
+    if len(words & italian_words) >= 2:
+        return "it"
+
+    return None
 
 
-# =========================
-# TRAIN ONE MODEL PER LANGUAGE
-# =========================
-def train_model(work_dir):
+def detect_language_by_model(text, models):
+    best_lang = None
+    best_score = float("-inf")
+    for lang, model in models.items():
+        s = model.score(text)
+        if s > best_score:
+            best_score = s
+            best_lang = lang
+    return best_lang
+
+
+def detect_language(text):
+    has_hiragana = False
+    has_katakana = False
+    has_cjk = False
+
+    for ch in text:
+        name = unicodedata.name(ch, "")
+        if "HIRAGANA" in name:
+            has_hiragana = True
+        elif "KATAKANA" in name:
+            has_katakana = True
+        elif "CJK UNIFIED" in name:
+            has_cjk = True
+        elif "HANGUL" in name:
+            return "ko"
+        elif "ARABIC" in name:
+            return "ar"
+        elif "DEVANAGARI" in name:
+            return "hi"
+        elif "CYRILLIC" in name:
+            return "ru"
+
+    if has_hiragana or has_katakana:
+        return "ja"
+    if has_cjk:
+        return "zh"
+
+    return "en"
+
+
+def train_model(work_dir, only_lang=None):
     os.makedirs(work_dir, exist_ok=True)
 
-    data_path = "data"
-
-    for fname in os.listdir(data_path):
+    for fname in os.listdir("data"):
         if not fname.endswith(".txt"):
             continue
 
         lang = fname.replace(".txt", "")
-        print(f"Training {lang}...")
 
-        model = CharNGramModel()
+        # NEW: train only specific language if requested
+        if only_lang and lang != only_lang:
+            continue
 
-        with open(os.path.join(data_path, fname), "r", encoding="utf8") as f:
-            model.train(f.readlines())
+        n = LANG_N.get(lang, N)
+        print(f"Training {lang} with N={n}...")
 
+        model = CharNGramModel(n=n)
+
+        with open(os.path.join("data", fname), "r", encoding="utf8") as f:
+            model.train_stream(f.read())
+
+        model.prune()
         model.save(os.path.join(work_dir, f"{lang}.checkpoint"))
 
     print("Training complete.")
 
 
-# =========================
-# TEST
-# =========================
 def test_model(work_dir, test_data, test_lang, test_output):
-
-    # Load all models
     models = {}
     for file in os.listdir(work_dir):
         if file.endswith(".checkpoint"):
             lang = file.replace(".checkpoint", "")
-            model = CharNGramModel()
-            model.load(os.path.join(work_dir, file))
-            models[lang] = model
+            m = CharNGramModel()
+            m.load(os.path.join(work_dir, file))
+            models[lang] = m
 
     with open(test_data, "r", encoding="utf8") as f:
-        inputs = f.readlines()
-
+        contexts = f.read().splitlines()
     with open(test_lang, "r", encoding="utf8") as f:
-        langs = f.readlines()
+        langs = f.read().splitlines()
+
+    assert len(contexts) == len(langs), "Mismatch between input and lang file!"
 
     with open(test_output, "w", encoding="utf8") as out:
-        for line, lang in zip(inputs, langs):
-            line = line.strip()
-            lang = lang.strip()
-
+        for context, lang in zip(contexts, langs):
             if lang not in models:
                 out.write("   \n")
                 continue
-
-            preds = models[lang].predict(line)
+            preds = models[lang].predict(context)
+            
             out.write("".join(preds) + "\n")
 
     print("Testing complete.")
 
 
-# =========================
-# MAIN
-# =========================
+def test_kaggle(work_dir, test_csv, output_csv):
+    import csv
+
+    models = {}
+    for file in os.listdir(work_dir):
+        if file.endswith(".checkpoint"):
+            lang = file.replace(".checkpoint", "")
+            m = CharNGramModel()
+            m.load(os.path.join(work_dir, file))
+            models[lang] = m
+
+    with open(test_csv, newline='', encoding="utf8") as f:
+        reader = csv.DictReader(f)
+        rows = list(reader)
+
+    with open(output_csv, "w", newline='', encoding="utf8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["id", "prediction"])
+
+        for row in rows:
+            idx = row["id"]
+            context = row["context"]
+
+            script_lang = detect_language(context)
+
+            if script_lang and script_lang != "en":
+                lang = script_lang
+            else:
+                latin_guess = detect_latin_variant(context)
+                if latin_guess:
+                    lang = latin_guess
+                else:
+                    lang = detect_language_by_model(context, models)
+
+            if lang not in models:
+                lang = "en"
+
+            preds = models[lang].predict(context)
+            
+            
+            writer.writerow([idx, "".join(preds)])
+
+    print("Submission written:", output_csv)
+
+
+def test_without_langfile(work_dir, test_data, true_lang_file, answer_file, output_pred=None):
+    models = {}
+    for file in os.listdir(work_dir):
+        if file.endswith(".checkpoint"):
+            lang = file.replace(".checkpoint", "")
+            m = CharNGramModel()
+            m.load(os.path.join(work_dir, file))
+            models[lang] = m
+
+    with open(test_data, "r", encoding="utf8") as f:
+        contexts = f.read().splitlines()
+    with open(true_lang_file, "r", encoding="utf8") as f:
+        true_langs = f.read().splitlines()
+    with open(answer_file, "r", encoding="utf8") as f:
+        answers = f.read().splitlines()
+
+    assert len(contexts) == len(true_langs) == len(answers)
+
+    total = 0
+    correct_lang = 0
+    correct_char = 0
+    lang_correct = defaultdict(int)
+    lang_total = defaultdict(int)
+    zh_buckets = {
+        "short":  {"total": 0, "correct": 0},
+        "medium": {"total": 0, "correct": 0},
+        "long":   {"total": 0, "correct": 0},
+    }
+
+    out_file = open(output_pred, "w", encoding="utf8") if output_pred else None
+
+    for i, (context, true_lang, true_char) in enumerate(zip(contexts, true_langs, answers)):
+        # FIX: normalize answer char same way model output is normalized
+       
+
+        script_lang = detect_language(context)
+
+        if script_lang and script_lang != "en":
+            predicted_lang = script_lang
+        else:
+            latin_guess = detect_latin_variant(context)
+            if latin_guess:
+                predicted_lang = latin_guess
+            else:
+                predicted_lang = detect_language_by_model(context, models)
+
+        if predicted_lang == true_lang:
+            correct_lang += 1
+
+        if predicted_lang not in models:
+            predicted_lang = "en"
+
+        preds = models[predicted_lang].predict(context)
+        
+        pred_string = "".join(preds).lower()[:3]
+        gold_char = true_char.lower()
+        if out_file:
+            out_file.write("".join(preds) + "\n")
+            if i % 1000 == 0:
+                out_file.flush()
+                print(f"Processed {i}/{len(contexts)} ({i/len(contexts)*100:.2f}%)")
+
+        hit = gold_char in pred_string
+        if hit:
+            correct_char += 1
+
+        lang_total[true_lang] += 1
+        if hit:
+            lang_correct[true_lang] += 1
+
+        if true_lang == "zh":
+            ctx_len = len(context)
+            bucket = "short" if ctx_len <= 5 else "medium" if ctx_len <= 20 else "long"
+            zh_buckets[bucket]["total"] += 1
+            if hit:
+                zh_buckets[bucket]["correct"] += 1
+
+        total += 1
+
+    if out_file:
+        out_file.close()
+
+    print(f"\nLanguage detection accuracy: {correct_lang / total:.4f}")
+    print(f"Character prediction accuracy: {correct_char / total:.4f}")
+
+    print("\nPer-language breakdown:")
+    for lang in sorted(lang_total):
+        t = lang_total[lang]
+        c = lang_correct[lang]
+        print(f"  {lang}: {c}/{t} = {c/t:.4f}")
+
+    print("\nZH breakdown by context length:")
+    for bucket, stats in zh_buckets.items():
+        t = stats["total"]
+        c = stats["correct"]
+        if t > 0:
+            print(f"  {bucket}: {c}/{t} = {c/t:.4f}")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("mode", choices=["train", "test"])
+    parser.add_argument("mode", choices=["train", "test", "kaggle", "eval_no_lang"])
     parser.add_argument("--work_dir", required=True)
     parser.add_argument("--test_data")
     parser.add_argument("--test_lang")
     parser.add_argument("--test_output")
-
+    parser.add_argument("--lang", help="Train only a specific language")
+    parser.add_argument("--test_csv")
+    parser.add_argument("--output_csv")
+    parser.add_argument("--true_lang")
+    parser.add_argument("--answer")
+    parser.add_argument("--output_pred")
     args = parser.parse_args()
 
     if args.mode == "train":
-        train_model(args.work_dir)
-
+        train_model(args.work_dir, only_lang=args.lang)
     elif args.mode == "test":
-        test_model(args.work_dir, args.test_data, args.test_lang, args.test_output)
+        # test_model(args.work_dir, args.test_data, args.test_lang, args.test_output)    elif args.mode == "kaggle":
+        # test_kaggle(args.work_dir, args.test_csv, args.output_csv)
+        models = {}
+        for file in os.listdir(args.work_dir):
+            if file.endswith(".checkpoint"):
+                lang = file.replace(".checkpoint", "")
+                m = CharNGramModel()
+                m.load(os.path.join(args.work_dir, file))
+                models[lang] = m
+
+        with open(args.test_data, "r", encoding="utf8") as f:
+            contexts = f.read().splitlines()
+
+        with open(args.test_output, "w", encoding="utf8") as out:
+            for context in contexts:
+                script_lang = detect_language(context)
+
+                if script_lang and script_lang != "en":
+                    lang = script_lang
+                else:
+                    latin_guess = detect_latin_variant(context)
+                    if latin_guess:
+                        lang = latin_guess
+                    else:
+                        lang = detect_language_by_model(context, models)
+
+                if lang not in models:
+                    lang = "en"
+
+                preds = models[lang].predict(context)
+                out.write("".join(preds[:3]) + "\n")
+    elif args.mode == "eval_no_lang":
+        test_without_langfile(
+            args.work_dir,
+            args.test_data,
+            args.true_lang,
+            args.answer,
+            args.output_pred
+        )
