@@ -5,9 +5,10 @@ import unicodedata
 from collections import defaultdict, Counter
 import math
 import gzip
+from concurrent.futures import ThreadPoolExecutor
 
 N = 10
-MIN_COUNT = 2
+MIN_COUNT = 3
 
 LANG_N = {
     "ja": 9,
@@ -16,10 +17,10 @@ LANG_N = {
     "ar": 10,
     "hi": 10,
     "ru": 10,
-    "en": 12,
-    "fr": 12,
-    "de": 12,
-    "it": 12,
+    "en": 10,
+    "fr": 10,
+    "de": 10,
+    "it": 10,
 }
 
 
@@ -184,21 +185,79 @@ class CharNGramModel:
                 self.vocab) = loaded
                 self.successor_counts = defaultdict(Counter)
 
-def detect_latin_variant(text):
-    t = text.lower()
-    words = set(t.split())
+LATIN_LANGS = {"en", "fr", "de", "it"}
 
-    if any(ch in t for ch in "äöüß"):
-        return "de"
-    if any(ch in t for ch in "œç"):
-        return "fr"
 
-    # Italian function words
-    italian_words = {"di", "che", "non", "una", "per", "con", "sono", "della", "questo", "nella"}
-    if len(words & italian_words) >= 2:
-        return "it"
+class LatinLangClassifier:
+    """Naive Bayes character trigram classifier for Latin-script language detection."""
 
-    return None
+    def __init__(self):
+        self.log_probs = {}
+        self.lang_log_prior = {}
+
+    def train(self, lang_texts):
+        """lang_texts: dict of lang -> text string (Latin langs only)."""
+        trigram_counts = {}
+        for lang, text in lang_texts.items():
+            counts = Counter()
+            t = text.lower()
+            for i in range(len(t) - 2):
+                counts[t[i:i+3]] += 1
+            trigram_counts[lang] = counts
+
+        total_docs = len(lang_texts)
+        for lang, counts in trigram_counts.items():
+            self.lang_log_prior[lang] = math.log(1.0 / total_docs)
+            total = sum(counts.values())
+            vocab = len(counts)
+            self.log_probs[lang] = {
+                trigram: math.log((cnt + 1) / (total + vocab))
+                for trigram, cnt in counts.items()
+            }
+            self.log_probs[lang]["__unk__"] = math.log(1 / (total + vocab))
+
+    def predict(self, text):
+        t = text.lower()
+        trigrams = [t[i:i+3] for i in range(len(t) - 2)]
+        if not trigrams:
+            return "en"
+        best_lang, best_score = None, float("-inf")
+        for lang, lp in self.log_probs.items():
+            unk = lp["__unk__"]
+            score = self.lang_log_prior[lang] + sum(lp.get(tg, unk) for tg in trigrams)
+            if score > best_score:
+                best_score = score
+                best_lang = lang
+        return best_lang
+
+    def save(self, path):
+        with gzip.open(path, "wb") as f:
+            pickle.dump((self.log_probs, self.lang_log_prior), f, protocol=pickle.HIGHEST_PROTOCOL)
+
+    def load(self, path):
+        with gzip.open(path, "rb") as f:
+            self.log_probs, self.lang_log_prior = pickle.load(f)
+
+
+def _load_one(args):
+    """Top-level function required for ThreadPoolExecutor."""
+    work_dir, fname = args
+    lang = fname.replace(".checkpoint", "")
+    m = CharNGramModel()
+    m.load(os.path.join(work_dir, fname))
+    return lang, m
+
+
+def load_models(work_dir):
+    """Load all language checkpoints in parallel."""
+    files = [f for f in os.listdir(work_dir)
+             if f.endswith(".checkpoint") and f != "latin_classifier.checkpoint"]
+    tasks = [(work_dir, f) for f in files]
+
+    with ThreadPoolExecutor() as executor:
+        results = list(executor.map(_load_one, tasks))
+
+    return dict(results)
 
 
 def detect_language_by_model(text, models):
@@ -210,6 +269,35 @@ def detect_language_by_model(text, models):
             best_score = s
             best_lang = lang
     return best_lang
+
+
+def detect_latin_variant(text):
+    t = text.lower()
+    words = set(t.split())
+    if any(ch in t for ch in "äöüß"):
+        return "de"
+    if any(ch in t for ch in "œç"):
+        return "fr"
+    italian_words = {"di", "che", "non", "una", "per", "con", "sono", "della", "questo", "nella"}
+    if len(words & italian_words) >= 2:
+        return "it"
+    return None
+
+
+def detect_full(text, models):
+    """Single entry point for language detection used at inference time."""
+    script_lang = detect_language(text)
+
+    if script_lang != "en":
+        return script_lang
+
+    # High-precision signals first (special chars + Italian function words)
+    special = detect_latin_variant(text)
+    if special:
+        return special
+
+    # Full n-gram model scoring on Latin languages only
+    return detect_language_by_model(text, {k: v for k, v in models.items() if k in LATIN_LANGS})
 
 
 def detect_language(text):
@@ -245,13 +333,14 @@ def detect_language(text):
 def train_model(work_dir, only_lang=None):
     os.makedirs(work_dir, exist_ok=True)
 
+    latin_texts = {}
+
     for fname in os.listdir("data"):
         if not fname.endswith(".txt"):
             continue
 
         lang = fname.replace(".txt", "")
 
-        # NEW: train only specific language if requested
         if only_lang and lang != only_lang:
             continue
 
@@ -261,22 +350,26 @@ def train_model(work_dir, only_lang=None):
         model = CharNGramModel(n=n)
 
         with open(os.path.join("data", fname), "r", encoding="utf8") as f:
-            model.train_stream(f.read())
+            text = f.read()
 
+        model.train_stream(text)
         model.prune()
         model.save(os.path.join(work_dir, f"{lang}.checkpoint"))
+
+        if lang in LATIN_LANGS:
+            latin_texts[lang] = text
+
+    if latin_texts and not only_lang:
+        print("Training Latin language classifier...")
+        classifier = LatinLangClassifier()
+        classifier.train(latin_texts)
+        classifier.save(os.path.join(work_dir, "latin_classifier.checkpoint"))
 
     print("Training complete.")
 
 
 def test_model(work_dir, test_data, test_lang, test_output):
-    models = {}
-    for file in os.listdir(work_dir):
-        if file.endswith(".checkpoint"):
-            lang = file.replace(".checkpoint", "")
-            m = CharNGramModel()
-            m.load(os.path.join(work_dir, file))
-            models[lang] = m
+    models = load_models(work_dir)
 
     with open(test_data, "r", encoding="utf8") as f:
         contexts = f.read().splitlines()
@@ -300,13 +393,7 @@ def test_model(work_dir, test_data, test_lang, test_output):
 def test_kaggle(work_dir, test_csv, output_csv):
     import csv
 
-    models = {}
-    for file in os.listdir(work_dir):
-        if file.endswith(".checkpoint"):
-            lang = file.replace(".checkpoint", "")
-            m = CharNGramModel()
-            m.load(os.path.join(work_dir, file))
-            models[lang] = m
+    models = load_models(work_dir)
 
     with open(test_csv, newline='', encoding="utf8") as f:
         reader = csv.DictReader(f)
@@ -320,36 +407,17 @@ def test_kaggle(work_dir, test_csv, output_csv):
             idx = row["id"]
             context = row["context"]
 
-            script_lang = detect_language(context)
-
-            if script_lang and script_lang != "en":
-                lang = script_lang
-            else:
-                latin_guess = detect_latin_variant(context)
-                if latin_guess:
-                    lang = latin_guess
-                else:
-                    lang = detect_language_by_model(context, models)
-
+            lang = detect_full(context, models)
             if lang not in models:
                 lang = "en"
-
             preds = models[lang].predict(context)
-            
-            
             writer.writerow([idx, "".join(preds)])
 
     print("Submission written:", output_csv)
 
 
 def test_without_langfile(work_dir, test_data, true_lang_file, answer_file, output_pred=None):
-    models = {}
-    for file in os.listdir(work_dir):
-        if file.endswith(".checkpoint"):
-            lang = file.replace(".checkpoint", "")
-            m = CharNGramModel()
-            m.load(os.path.join(work_dir, file))
-            models[lang] = m
+    models = load_models(work_dir)
 
     with open(test_data, "r", encoding="utf8") as f:
         contexts = f.read().splitlines()
@@ -377,16 +445,7 @@ def test_without_langfile(work_dir, test_data, true_lang_file, answer_file, outp
         # FIX: normalize answer char same way model output is normalized
        
 
-        script_lang = detect_language(context)
-
-        if script_lang and script_lang != "en":
-            predicted_lang = script_lang
-        else:
-            latin_guess = detect_latin_variant(context)
-            if latin_guess:
-                predicted_lang = latin_guess
-            else:
-                predicted_lang = detect_language_by_model(context, models)
+        predicted_lang = detect_full(context, models)
 
         if predicted_lang == true_lang:
             correct_lang += 1
@@ -459,37 +518,20 @@ if __name__ == "__main__":
     if args.mode == "train":
         train_model(args.work_dir, only_lang=args.lang)
     elif args.mode == "test":
-        # test_model(args.work_dir, args.test_data, args.test_lang, args.test_output)    elif args.mode == "kaggle":
-        # test_kaggle(args.work_dir, args.test_csv, args.output_csv)
-        models = {}
-        for file in os.listdir(args.work_dir):
-            if file.endswith(".checkpoint"):
-                lang = file.replace(".checkpoint", "")
-                m = CharNGramModel()
-                m.load(os.path.join(args.work_dir, file))
-                models[lang] = m
+        models, classifier = load_models(args.work_dir)
 
         with open(args.test_data, "r", encoding="utf8") as f:
             contexts = f.read().splitlines()
 
         with open(args.test_output, "w", encoding="utf8") as out:
             for context in contexts:
-                script_lang = detect_language(context)
-
-                if script_lang and script_lang != "en":
-                    lang = script_lang
-                else:
-                    latin_guess = detect_latin_variant(context)
-                    if latin_guess:
-                        lang = latin_guess
-                    else:
-                        lang = detect_language_by_model(context, models)
-
+                lang = detect_full(context, models)
                 if lang not in models:
                     lang = "en"
-
                 preds = models[lang].predict(context)
                 out.write("".join(preds[:3]) + "\n")
+    elif args.mode == "kaggle":
+        test_kaggle(args.work_dir, args.test_csv, args.output_csv)
     elif args.mode == "eval_no_lang":
         test_without_langfile(
             args.work_dir,
